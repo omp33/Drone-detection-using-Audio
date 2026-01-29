@@ -21,8 +21,8 @@ def load_and_extract(folder, label, sr=SAMPLE_RATE):
     return features, labels
 
 # Load folders
-drone_feats, drone_labels = load_and_extract('data/audio_train/drone', 1)  # Drone = 1
-noise_feats, noise_labels = load_and_extract('data/audio_train/noise', 0)  # Noise = 0
+drone_feats, drone_labels = load_and_extract(r'C:\Users\Omprakash\Desktop\pthon\data\drone', 1)  # Drone = 1
+noise_feats, noise_labels = load_and_extract(r'C:\Users\Omprakash\Desktop\pthon\data\noise', 0)  # Noise = 0
 
 # Combine
 X = np.vstack(drone_feats + noise_feats)
