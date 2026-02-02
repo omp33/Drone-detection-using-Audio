@@ -1,151 +1,113 @@
+# audio_rule_based.py
+# -------------------------------------------------
+# Rule-based drone audio presence detector
+# Uses:
+# - Multi-band spectral energy
+# - Frequency bin contiguity
+# - Temporal consistency
+# -------------------------------------------------
+
 import numpy as np
 import librosa
-import matplotlib.pyplot as plt
+from collections import deque
+HISTORY_LEN = 3
+REQUIRED_HITS = 2
 
-# ============================
-# CONFIG — TUNE THESE ONCE
-# ============================
+band_history = deque(maxlen=HISTORY_LEN)
 
 SAMPLE_RATE = 22050
 
-N_FFT = 1024                 # small FFT → good time resolution
-HOP_LENGTH = 256
-FMIN = 80                    # ignore rumble
-FMAX = 1200                  # drones live here
-PERSIST_FRAMES = 12          # ~0.15–0.2s persistence
-ENERGY_PERCENTILE = 75       # adaptive threshold
-HARMONIC_TOL = 0.08          # 8% frequency tolerance
+# Frequency bands to scan (Hz)
+FREQ_BANDS = [
+    (80, 400),
+    (300, 900),
+    (800, 2000)
+]
 
-# ============================
-# CORE LOGIC
-# ============================
-
-def compute_log_spectrogram(y, sr):
-    S = librosa.stft(
-        y,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
-        window="hann"
-    )
-    S_mag = np.abs(S)
-    S_log = librosa.amplitude_to_db(S_mag, ref=np.max)
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=N_FFT)
-    times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=HOP_LENGTH)
-    return S_log, freqs, times
+# Tunable thresholds (reasonable defaults)
+ENERGY_RATIO_TH = 0.15     # band energy / total energy
+BIN_CONTIGUITY_TH = 4      # min consecutive freq bins
+TEMPORAL_FRAMES_TH = 3     # frames must persist
+FRAME_SEC = 0.1            # STFT frame duration
 
 
-def band_mask(freqs):
-    return np.where((freqs >= FMIN) & (freqs <= FMAX))[0]
-
-
-def persistence_score(S_band):
+# -------------------------------------------------
+def detect_drone_audio(y, sr=SAMPLE_RATE, debug=False):
     """
-    Measures how long energy stays 'on' in narrow frequency bins.
+    Rule-based drone audio presence detector.
+    Returns structured result, not fake probabilities.
     """
-    scores = []
-    for f_bin in range(S_band.shape[0]):
-        row = S_band[f_bin]
-        thresh = np.percentile(row, ENERGY_PERCENTILE)
-        active = row > thresh
 
-        # count longest continuous run
-        max_run = 0
-        run = 0
-        for v in active:
-            if v:
-                run += 1
-                max_run = max(max_run, run)
-            else:
-                run = 0
+    if len(y) < int(0.5 * sr):
+        return {"audio_present": False, "reason": "too_short"}
 
-        scores.append(max_run)
+    # STFT
+    n_fft = 2048
+    hop_length = int(FRAME_SEC * sr)
+    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-    return np.array(scores)
+    total_energy = np.sum(S) + 1e-9
 
+    band_hits = []
 
-def harmonic_check(S_band, freqs_band):
-    """
-    Weak harmonic agreement check.
-    """
-    mean_energy = np.mean(S_band, axis=1)
-    f0_idx = np.argmax(mean_energy)
-    f0 = freqs_band[f0_idx]
-
-    if f0 < 100:
-        return False
-
-    for mult in [2, 3]:
-        target = mult * f0
-        tol = target * HARMONIC_TOL
-        if target > freqs_band[-1]:
+    for (f_low, f_high) in FREQ_BANDS:
+        idx = np.where((freqs >= f_low) & (freqs <= f_high))[0]
+        if len(idx) == 0:
             continue
 
-        idx = np.where(np.abs(freqs_band - target) < tol)[0]
-        if len(idx) == 0:
-            return False
+        band_energy = np.sum(S[idx, :])
+        energy_ratio = band_energy / total_energy
 
-        if np.mean(mean_energy[idx]) < 0.3 * mean_energy[f0_idx]:
-            return False
+        if energy_ratio < ENERGY_RATIO_TH:
+            continue
 
-    return True
+        # ---- Frequency bin contiguity ----
+        active_bins = np.mean(S[idx, :], axis=1)
+        active_mask = active_bins > (0.3 * np.max(active_bins))
 
+        max_run = _max_consecutive(active_mask)
 
-def detect_drone_audio(y, sr=SAMPLE_RATE, debug=False):
-    S_log, freqs, times = compute_log_spectrogram(y, sr)
-    band_idx = band_mask(freqs)
+        if max_run < BIN_CONTIGUITY_TH:
+            continue
 
-    S_band = S_log[band_idx, :]
-    freqs_band = freqs[band_idx]
+        # ---- Temporal consistency ----
+        temporal_energy = np.mean(S[idx, :], axis=0)
+        temporal_mask = temporal_energy > (0.4 * np.max(temporal_energy))
 
-    pers = persistence_score(S_band)
+        if _max_consecutive(temporal_mask) < TEMPORAL_FRAMES_TH:
+            continue
 
-    persistent_bins = pers >= PERSIST_FRAMES
-    num_persistent = np.sum(persistent_bins)
+        band_hits.append((f_low, f_high))
 
-    if num_persistent < 2:
-        return {
-            "audio_present": False,
-            "strength": "none",
-            "score": 0.0,
-            "dominant_band": None
-        }
-
-    # Cluster persistent bins
-    idxs = np.where(persistent_bins)[0]
-    f_low = freqs_band[idxs[0]]
-    f_high = freqs_band[idxs[-1]]
-
-    harmonic_ok = harmonic_check(S_band, freqs_band)
-
-    score = num_persistent
-    if harmonic_ok:
-        score *= 1.4
-
-    if score > 20:
-        strength = "strong"
-    elif score > 10:
-        strength = "medium"
-    else:
-        strength = "weak"
+    result = {
+        "audio_present": len(band_hits) >= 2,
+        "bands_confirmed": band_hits,
+        "strength": _strength_from_hits(len(band_hits))
+    }
 
     if debug:
-        plt.figure(figsize=(10,4))
-        plt.imshow(
-            S_band,
-            aspect="auto",
-            origin="lower",
-            extent=[times[0], times[-1], freqs_band[0], freqs_band[-1]],
-            cmap="magma"
-        )
-        plt.colorbar(label="dB")
-        plt.title("Log Spectrogram (Drone Band)")
-        plt.xlabel("Time (s)")
-        plt.ylabel("Frequency (Hz)")
-        plt.show()
+        print("[DEBUG] Confirmed bands:", band_hits)
 
-    return {
-        "audio_present": True,
-        "strength": strength,
-        "score": float(score),
-        "dominant_band": (float(f_low), float(f_high))
-    }
+    return result
+
+
+# -------------------------------------------------
+def _max_consecutive(mask):
+    """Longest run of True values."""
+    max_run = run = 0
+    for v in mask:
+        if v:
+            run += 1
+            max_run = max(max_run, run)
+        else:
+            run = 0
+    return max_run
+
+
+def _strength_from_hits(n):
+    if n >= 3:
+        return "strong"
+    if n == 2:
+        return "moderate"
+    return "weak"
