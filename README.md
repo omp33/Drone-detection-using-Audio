@@ -1,6 +1,6 @@
 # Drone Detection Using Audio
 
-Passive acoustic UAV detection using handcrafted spectral features and a gradient-boosted classifier. No deep learning — engineered features, interpretable model, real-time capable inference.
+Passive acoustic UAV detection using spectral features and a gradient-boosted classifier. No deep learning — engineered features, interpretable model.
 
 ---
 
@@ -132,6 +132,6 @@ If you use this work, please cite:
 
 ---
 
-## License
+## LinkedIn 
 
-MIT
+https://www.linkedin.com/posts/omprakash-patel-a06703279_machinelearning-dronedetection-pytorch-ugcPost-7435358760191074304-BYQH?utm_source=share&utm_medium=member_desktop&rcm=ACoAAEPp_eYBDJlnb98bQwju5X7Qqoz8X4n3Xhg
