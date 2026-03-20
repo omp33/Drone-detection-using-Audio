@@ -1,0 +1,22 @@
+[
+  {
+    "file": "mic3_8array-up-File1_hybrid (2)_loud.wav",
+    "class": "background",
+    "error": "Audio is silent (max amplitude: 0.000702)"
+  },
+  {
+    "file": "mic3_8array-up-File1_hybrid (2)_original.wav",
+    "class": "background",
+    "error": "Audio is silent (max amplitude: 0.000549)"
+  },
+  {
+    "file": "mic3_8array-up-File1_hybrid (2)_quiet.wav",
+    "class": "background",
+    "error": "Audio is silent (max amplitude: 0.000397)"
+  },
+  {
+    "file": "mic3_8array-up-File1_neural (2)_quiet.wav",
+    "class": "background",
+    "error": "Audio is silent (max amplitude: 0.000702)"
+  }
+]
